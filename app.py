@@ -32,6 +32,8 @@ CHECKLIST_FILE = DATA_DIR / "departure_checklists.json"
 FAVORITES_FILE = DATA_DIR / "favorite_places.json"
 RESERVATIONS_FILE = DATA_DIR / "reservations.json"
 PHOTO_META_FILE = DATA_DIR / "photo_metadata.json"
+SAVED_EVENTS_FILE = DATA_DIR / "saved_events.json"
+ALBUMS_FILE = DATA_DIR / "trip_albums.json"
 
 US_STATES = [
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
@@ -134,6 +136,8 @@ def ensure_storage() -> None:
         FAVORITES_FILE,
         RESERVATIONS_FILE,
         PHOTO_META_FILE,
+        SAVED_EVENTS_FILE,
+        ALBUMS_FILE,
     ]:
         if not path.exists():
             path.write_text("[]", encoding="utf-8")
@@ -156,6 +160,14 @@ def get_supabase_client() -> Any | None:
     except ImportError:
         return None
     return create_client(url, key)
+
+
+def get_secret_value(name: str) -> str | None:
+    try:
+        value = st.secrets.get(name)
+    except Exception:
+        return None
+    return str(value) if value else None
 
 
 def load_cloud_records(path: Path) -> list[dict[str, Any]] | None:
@@ -266,6 +278,54 @@ def get_weather(latitude: float, longitude: float) -> dict[str, Any]:
     return response.json()
 
 
+@st.cache_data(ttl=60 * 30)
+def get_ticketmaster_events(
+    latitude: float,
+    longitude: float,
+    radius_miles: int,
+    days_ahead: int,
+    api_key: str,
+) -> list[dict[str, Any]]:
+    start_at = datetime.now().replace(microsecond=0).isoformat() + "Z"
+    end_at = datetime.now().replace(microsecond=0) + pd.Timedelta(days=days_ahead)
+    response = requests.get(
+        "https://app.ticketmaster.com/discovery/v2/events.json",
+        params={
+            "apikey": api_key,
+            "latlong": f"{latitude},{longitude}",
+            "radius": radius_miles,
+            "unit": "miles",
+            "startDateTime": start_at,
+            "endDateTime": end_at.isoformat() + "Z",
+            "sort": "date,asc",
+            "size": 30,
+        },
+        timeout=12,
+    )
+    response.raise_for_status()
+    data = response.json()
+    raw_events = data.get("_embedded", {}).get("events", [])
+    events = []
+    for event in raw_events:
+        venue = event.get("_embedded", {}).get("venues", [{}])[0]
+        dates = event.get("dates", {}).get("start", {})
+        events.append(
+            {
+                "id": event.get("id"),
+                "name": event.get("name", "Local event"),
+                "date": dates.get("localDate", ""),
+                "time": dates.get("localTime", ""),
+                "venue": venue.get("name", ""),
+                "city": venue.get("city", {}).get("name", ""),
+                "state": venue.get("state", {}).get("stateCode", ""),
+                "url": event.get("url", ""),
+                "category": event.get("classifications", [{}])[0].get("segment", {}).get("name", "Event"),
+                "image": (event.get("images") or [{}])[0].get("url", ""),
+            }
+        )
+    return events
+
+
 def weather_label(code: int) -> str:
     labels = {
         0: "Clear",
@@ -363,6 +423,7 @@ def all_photo_records(journal: list[dict[str, Any]]) -> list[dict[str, str]]:
                         "title": entry.get("title", "Trip photo"),
                         "date": entry.get("entry_date", ""),
                         "location": entry.get("location", ""),
+                        "album": entry.get("album", "Spring Adventure"),
                         "caption": photo_meta.get("caption", ""),
                         "favorite": photo_meta.get("favorite", False),
                     }
@@ -382,6 +443,39 @@ def update_photo_metadata(path: str, caption: str, favorite: bool) -> None:
     if not updated:
         records.insert(0, {"path": path, "caption": caption, "favorite": favorite})
     save_records(PHOTO_META_FILE, records)
+
+
+def save_event(event: dict[str, Any]) -> None:
+    saved = load_records(SAVED_EVENTS_FILE)
+    if any(item.get("id") == event.get("id") for item in saved):
+        return
+    event["saved_at"] = datetime.now().isoformat()
+    saved.insert(0, event)
+    save_records(SAVED_EVENTS_FILE, saved)
+
+
+def album_names() -> list[str]:
+    albums = load_records(ALBUMS_FILE)
+    names = [album.get("name", "") for album in albums if album.get("name")]
+    return names or ["Spring Adventure"]
+
+
+def ensure_album(name: str, description: str = "") -> None:
+    if not name:
+        return
+    albums = load_records(ALBUMS_FILE)
+    if any(album.get("name", "").lower() == name.lower() for album in albums):
+        return
+    albums.insert(
+        0,
+        {
+            "id": datetime.now().isoformat(),
+            "name": name,
+            "description": description,
+            "created_at": datetime.now().isoformat(),
+        },
+    )
+    save_records(ALBUMS_FILE, albums)
 
 
 def adventure_badges(
@@ -603,14 +697,20 @@ def render_photo_gallery(journal: list[dict[str, Any]]) -> None:
         st.info("Uploaded journal photos will show up here in a travel gallery.")
         return
 
-    col1, col2 = st.columns([1, 1])
+    col1, col2, col3 = st.columns([1, 1, 1])
     location_filter = col1.selectbox(
         "Filter by location",
         ["All"] + sorted({photo["location"] for photo in photos if photo["location"]}),
     )
-    favorites_only = col2.checkbox("Favorites only")
+    album_filter = col2.selectbox(
+        "Filter by album",
+        ["All"] + sorted({photo.get("album", "Spring Adventure") for photo in photos}),
+    )
+    favorites_only = col3.checkbox("Favorites only")
     if location_filter != "All":
         photos = [photo for photo in photos if photo["location"] == location_filter]
+    if album_filter != "All":
+        photos = [photo for photo in photos if photo.get("album", "Spring Adventure") == album_filter]
     if favorites_only:
         photos = [photo for photo in photos if photo.get("favorite")]
 
@@ -679,6 +779,24 @@ def render_trip_awards(journal: list[dict[str, Any]], stops: list[dict[str, Any]
             """,
             unsafe_allow_html=True,
         )
+
+
+def render_event_card(event: dict[str, Any], key_prefix: str) -> None:
+    with st.container(border=True):
+        if event.get("image"):
+            st.image(event["image"], use_column_width=True)
+        st.markdown(f"**{event.get('name', 'Local event')}**")
+        st.caption(
+            f"{event.get('date', '')} {event.get('time', '')} - "
+            f"{event.get('venue', '')} - {event.get('city', '')}, {event.get('state', '')}"
+        )
+        st.write(event.get("category", "Event"))
+        col1, col2 = st.columns(2)
+        if event.get("url"):
+            col1.link_button("Event page", event["url"], use_container_width=True)
+        if col2.button("Save event", key=f"{key_prefix}_{event.get('id', event.get('name', 'event'))}", use_container_width=True):
+            save_event(event.copy())
+            st.success("Event saved.")
 
 
 def page_header() -> None:
@@ -1092,6 +1210,19 @@ def render_dashboard(location: dict[str, Any]) -> None:
         weather_summary = f"{current['temperature_2m']:.0f} F, {weather_label(int(current['weather_code']))}"
     except requests.RequestException:
         weather_summary = "Weather offline"
+    api_key = get_secret_value("TICKETMASTER_API_KEY")
+    weekend_events: list[dict[str, Any]] = []
+    if api_key:
+        try:
+            weekend_events = get_ticketmaster_events(
+                float(location["latitude"]),
+                float(location["longitude"]),
+                50,
+                7,
+                api_key,
+            )[:3]
+        except requests.RequestException:
+            weekend_events = []
     map_col, command_col = st.columns([1.55, 1])
     with map_col:
         render_route_map(location, stops, height=470)
@@ -1101,11 +1232,16 @@ def render_dashboard(location: dict[str, Any]) -> None:
         st.metric("Today's Weather", weather_summary)
         st.metric("Next Stop", planned_stops[0].get("name", "Add a planned stop") if planned_stops else "Add a planned stop")
         st.metric("Next Reservation", next_reservation.get("campground", "None saved"))
+        st.metric("Events Nearby", len(weekend_events) if api_key else "Add key")
         if latest_checklist:
             done = len(latest_checklist.get("completed", []))
             total = latest_checklist.get("total_items", len(DEPARTURE_ITEMS))
             st.progress(done / total if total else 0)
             st.caption(f"Latest departure checklist: {done}/{total} complete")
+        if weekend_events:
+            st.markdown("**This Week Nearby**")
+            for event in weekend_events:
+                st.caption(f"{event.get('date', '')}: {event.get('name', '')}")
 
     st.markdown("### Bob's Travel Stats")
     col1, col2, col3, col4 = st.columns(4)
@@ -1151,11 +1287,22 @@ def render_dashboard(location: dict[str, Any]) -> None:
 
 def render_journal() -> None:
     st.subheader("Travel Journal")
+    with st.expander("Trip albums"):
+        albums = load_records(ALBUMS_FILE)
+        if albums:
+            st.write(", ".join(album.get("name", "") for album in albums))
+        new_album = st.text_input("New album name", placeholder="Spring 2026, Route 66, Arizona Winter")
+        album_description = st.text_input("Album description")
+        if st.button("Create album", use_container_width=True):
+            ensure_album(new_album, album_description)
+            st.success("Album created.")
+
     with st.form("journal_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
         title = col1.text_input("Entry title")
         entry_date = col2.date_input("Date", value=date.today())
         location = st.text_input("Location")
+        album = st.selectbox("Trip album", album_names())
         tags = st.multiselect(
             "Tags",
             [
@@ -1191,6 +1338,7 @@ def render_journal() -> None:
                     "title": title,
                     "entry_date": str(entry_date),
                     "location": location,
+                    "album": album,
                     "tags": tags,
                     "rating": rating,
                     "memory_prompt": prompt,
@@ -1202,6 +1350,9 @@ def render_journal() -> None:
             st.success("Journal entry saved.")
 
     entries = load_records(JOURNAL_FILE)
+    album_filter = st.selectbox("Show album", ["All"] + album_names())
+    if album_filter != "All":
+        entries = [entry for entry in entries if entry.get("album", "Spring Adventure") == album_filter]
     search = st.text_input("Search entries")
     if search:
         needle = search.lower()
@@ -1381,6 +1532,37 @@ def render_events(location: dict[str, Any]) -> None:
     st.subheader("Things Nearby")
     city = location.get("name", "")
     state = location.get("admin1", "")
+    lat = float(location["latitude"])
+    lon = float(location["longitude"])
+
+    st.subheader("Local Events Feed")
+    api_key = get_secret_value("TICKETMASTER_API_KEY")
+    radius = st.slider("Search radius", 10, 100, 50, step=10)
+    days_ahead = st.slider("Days ahead", 7, 90, 30, step=7)
+    if api_key:
+        try:
+            events = get_ticketmaster_events(lat, lon, radius, days_ahead, api_key)
+        except requests.RequestException:
+            events = []
+            st.error("Ticketmaster events are unavailable right now.")
+        if events:
+            for index in range(0, min(len(events), 9), 3):
+                cols = st.columns(3)
+                for column, event in zip(cols, events[index : index + 3]):
+                    with column:
+                        render_event_card(event, "event_feed")
+        else:
+            st.info("No Ticketmaster events found for this location and date range.")
+    else:
+        st.info("Add `TICKETMASTER_API_KEY` to Streamlit secrets to turn on the live local events feed.")
+
+    saved_events = load_records(SAVED_EVENTS_FILE)
+    if saved_events:
+        st.subheader("Saved Events")
+        for event in saved_events[:6]:
+            render_event_card(event, "saved_event")
+
+    st.divider()
     st.write(f"Quick searches for **{city}, {state}**.")
     links = event_search_links(city, state)
     cols = st.columns(len(links))
@@ -1540,6 +1722,45 @@ def render_recap() -> None:
     )
 
 
+def render_trip_albums() -> None:
+    st.subheader("Trip Albums")
+    journal = load_records(JOURNAL_FILE)
+    albums = load_records(ALBUMS_FILE)
+    if not albums:
+        ensure_album("Spring Adventure", "Default travel album")
+        albums = load_records(ALBUMS_FILE)
+
+    with st.form("album_form", clear_on_submit=True):
+        name = st.text_input("Album name", placeholder="Spring 2026")
+        description = st.text_area("Album description", height=90)
+        submitted = st.form_submit_button("Create album", use_container_width=True)
+    if submitted:
+        if not name:
+            st.warning("Add an album name first.")
+        else:
+            ensure_album(name, description)
+            st.success("Album created.")
+
+    for album in albums:
+        name = album.get("name", "Trip album")
+        album_entries = [entry for entry in journal if entry.get("album", "Spring Adventure") == name]
+        album_photos = all_photo_records(album_entries)
+        with st.expander(f"{name} - {len(album_entries)} notes - {len(album_photos)} photos", expanded=False):
+            st.write(album.get("description", ""))
+            cols = st.columns(4)
+            cols[0].metric("Journal Notes", len(album_entries))
+            cols[1].metric("Photos", len(album_photos))
+            cols[2].metric("Favorites", len([photo for photo in album_photos if photo.get("favorite")]))
+            cols[3].metric("Top Rating", max([entry.get("rating", 0) for entry in album_entries] or [0]))
+            if album_photos:
+                photo_cols = st.columns(min(3, len(album_photos)))
+                for column, photo in zip(photo_cols, album_photos[:3]):
+                    column.image(photo["path"], use_column_width=True)
+                    column.caption(photo.get("caption") or photo.get("title", "Trip photo"))
+            for entry in album_entries[:3]:
+                render_postcard_card(entry)
+
+
 def render_departure_checklist() -> None:
     st.subheader("Departure Checklist")
     st.caption("A quick leave-the-site check before Bob pulls out.")
@@ -1655,6 +1876,12 @@ create table app_records (
         )
     else:
         st.success("Supabase credentials found. App records will use cloud storage with local fallback.")
+
+    st.subheader("Ticketmaster Events")
+    if get_secret_value("TICKETMASTER_API_KEY"):
+        st.success("Ticketmaster API key found. The Events tab can show live local events.")
+    else:
+        st.info("Add `TICKETMASTER_API_KEY` in Streamlit secrets to show live local events near Bob.")
 
 
 def render_reservations() -> None:
@@ -1830,6 +2057,7 @@ def main() -> None:
             "Basecamp",
             "Journal",
             "Gallery",
+            "Albums",
             "Stops",
             "Weather",
             "Events",
@@ -1850,26 +2078,28 @@ def main() -> None:
     with tabs[2]:
         render_photo_gallery(load_records(JOURNAL_FILE))
     with tabs[3]:
-        render_stops()
+        render_trip_albums()
     with tabs[4]:
-        render_weather(location)
+        render_stops()
     with tabs[5]:
-        render_events(location)
+        render_weather(location)
     with tabs[6]:
-        render_departure_checklist()
+        render_events(location)
     with tabs[7]:
-        render_reservations()
+        render_departure_checklist()
     with tabs[8]:
-        render_favorites()
+        render_reservations()
     with tabs[9]:
-        render_family_view(location)
+        render_favorites()
     with tabs[10]:
-        render_fun_stuff()
+        render_family_view(location)
     with tabs[11]:
-        render_recap()
+        render_fun_stuff()
     with tabs[12]:
-        render_maintenance()
+        render_recap()
     with tabs[13]:
+        render_maintenance()
+    with tabs[14]:
         render_cloud_storage_status()
 
 

@@ -16,7 +16,9 @@ A private Streamlit travel companion for Bob's RV trips from an Arizona home bas
 - RV-friendly weather alert cards for wind, heat, and freezing temperatures
 - Browser GPS/manual coordinate helper and radar/forecast links
 - Local event search links for festivals, farmers markets, live music, and campgrounds
+- Ticketmaster-powered local events feed with saved events when `TICKETMASTER_API_KEY` is configured
 - Local food finder for diners, breakfast, BBQ, coffee, and ice cream
+- Trip albums for grouping journal entries and photos by route, season, or adventure
 - Departure checklist and favorite places tracker
 - Reservation tracker with calendar-style monthly view, campground, site, confirmation number, dates, phone, balance, and notes
 - Photo captions and favorite-photo marking
@@ -55,6 +57,7 @@ Add these values to Streamlit secrets:
 ```toml
 SUPABASE_URL = "https://your-project.supabase.co"
 SUPABASE_ANON_KEY = "your-anon-key"
+TICKETMASTER_API_KEY = "your-ticketmaster-api-key"
 ```
 
 Create this table in Supabase:
