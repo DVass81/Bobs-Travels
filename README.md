@@ -11,15 +11,16 @@ A private Streamlit travel companion for Bob's RV trips from an Arizona home bas
 - Campground score cards for quiet, parking ease, and stay-again rating
 - Dashboard with current location, Arizona home base distance, map, stats, badges, and recent postcards
 - Trip command center with current stop, today's weather, next stop, reservation, and checklist progress
-- Full travel-poster hero, custom BA logo mark, theme presets, route board, and upgraded state sticker board
+- Full travel-poster hero, custom BA logo mark, stronger theme presets, PyDeck route map, and upgraded state sticker board
 - Weather watch using Open-Meteo, with no API key required
 - RV-friendly weather alert cards for wind, heat, and freezing temperatures
 - Browser GPS/manual coordinate helper and radar/forecast links
 - Local event search links for festivals, farmers markets, live music, and campgrounds
 - Local food finder for diners, breakfast, BBQ, coffee, and ice cream
 - Departure checklist and favorite places tracker
-- Reservation tracker with campground, site, confirmation number, dates, phone, balance, and notes
-- Family View tab with a read-only travel snapshot
+- Reservation tracker with calendar-style monthly view, campground, site, confirmation number, dates, phone, balance, and notes
+- Photo captions and favorite-photo marking
+- Family View tab with a polished read-only travel snapshot
 - Adventure badges, trip awards, road timeline, state sticker board, and season recap
 - Fun Stuff tab with an adventure prompt wheel, roadside finds, and postcard generator
 - RV maintenance log for tires, generator, propane, batteries, truck, repairs, and more

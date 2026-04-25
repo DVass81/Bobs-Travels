@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import pydeck as pdk
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
@@ -30,6 +31,7 @@ ROADSIDE_FILE = DATA_DIR / "roadside_finds.json"
 CHECKLIST_FILE = DATA_DIR / "departure_checklists.json"
 FAVORITES_FILE = DATA_DIR / "favorite_places.json"
 RESERVATIONS_FILE = DATA_DIR / "reservations.json"
+PHOTO_META_FILE = DATA_DIR / "photo_metadata.json"
 
 US_STATES = [
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
@@ -67,7 +69,7 @@ DEPARTURE_ITEMS = [
 ]
 
 THEME_PRESETS = {
-    "Coastal Drive": {
+    "Coastal Highway": {
         "sunshine": "#FFE66D",
         "coral": "#FF6B6B",
         "teal": "#00B4D8",
@@ -76,6 +78,16 @@ THEME_PRESETS = {
         "mint": "#CAF0F8",
         "cream": "#FFF7E6",
         "background": "linear-gradient(180deg, #dff8ff 0%, #fff7e6 54%, #ffffff 100%)",
+    },
+    "Route 66": {
+        "sunshine": "#FFD23F",
+        "coral": "#EE4266",
+        "teal": "#3BCEAC",
+        "deep": "#1B1B3A",
+        "sky": "#5BC0EB",
+        "mint": "#EAF8BF",
+        "cream": "#FFF4D6",
+        "background": "linear-gradient(180deg, #dff6ff 0%, #fff4d6 46%, #ffffff 100%)",
     },
     "Desert Sunset": {
         "sunshine": "#FFD166",
@@ -121,6 +133,7 @@ def ensure_storage() -> None:
         CHECKLIST_FILE,
         FAVORITES_FILE,
         RESERVATIONS_FILE,
+        PHOTO_META_FILE,
     ]:
         if not path.exists():
             path.write_text("[]", encoding="utf-8")
@@ -338,19 +351,37 @@ def visited_states(stops: list[dict[str, Any]], journal: list[dict[str, Any]]) -
 
 
 def all_photo_records(journal: list[dict[str, Any]]) -> list[dict[str, str]]:
+    metadata = {item.get("path"): item for item in load_records(PHOTO_META_FILE)}
     photos = []
     for entry in journal:
         for photo_path in entry.get("photos", []):
             if Path(photo_path).exists():
+                photo_meta = metadata.get(photo_path, {})
                 photos.append(
                     {
                         "path": photo_path,
                         "title": entry.get("title", "Trip photo"),
                         "date": entry.get("entry_date", ""),
                         "location": entry.get("location", ""),
+                        "caption": photo_meta.get("caption", ""),
+                        "favorite": photo_meta.get("favorite", False),
                     }
                 )
     return photos
+
+
+def update_photo_metadata(path: str, caption: str, favorite: bool) -> None:
+    records = load_records(PHOTO_META_FILE)
+    updated = False
+    for record in records:
+        if record.get("path") == path:
+            record["caption"] = caption
+            record["favorite"] = favorite
+            updated = True
+            break
+    if not updated:
+        records.insert(0, {"path": path, "caption": caption, "favorite": favorite})
+    save_records(PHOTO_META_FILE, records)
 
 
 def adventure_badges(
@@ -442,6 +473,106 @@ def render_state_sticker_board(states: set[str]) -> None:
             column.markdown(f'<div class="{class_name}">{state}</div>', unsafe_allow_html=True)
 
 
+def build_map_rows(location: dict[str, Any], stops: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = [
+        {
+            "stop": HOME_BASE["name"],
+            "lat": HOME_BASE["latitude"],
+            "lon": HOME_BASE["longitude"],
+            "kind": "Home",
+            "color": [255, 210, 63],
+        },
+        {
+            "stop": location.get("name", "Current stop"),
+            "lat": float(location["latitude"]),
+            "lon": float(location["longitude"]),
+            "kind": "Current",
+            "color": [238, 66, 102],
+        },
+    ]
+    colors = {
+        "Planned": [91, 192, 235],
+        "Visited": [59, 206, 172],
+        "Current": [238, 66, 102],
+    }
+    for stop in stops:
+        if stop.get("latitude") and stop.get("longitude"):
+            status = stop.get("status", "Stop")
+            rows.append(
+                {
+                    "stop": stop.get("name", "Stop"),
+                    "lat": float(stop["latitude"]),
+                    "lon": float(stop["longitude"]),
+                    "kind": status,
+                    "color": colors.get(status, [67, 170, 139]),
+                    "details": f"{stop.get('city', '')}, {stop.get('state', '')} - {stop.get('nights', 0)} nights",
+                }
+            )
+    return rows
+
+
+def render_route_map(location: dict[str, Any], stops: list[dict[str, Any]], height: int = 430) -> None:
+    rows = build_map_rows(location, stops)
+    map_df = pd.DataFrame(rows)
+    if map_df.empty:
+        st.info("Map points will show after a location is selected.")
+        return
+    center_lat = float(map_df["lat"].mean())
+    center_lon = float(map_df["lon"].mean())
+    route_points = [
+        {"lat": row["lat"], "lon": row["lon"], "order": index}
+        for index, row in enumerate(rows)
+        if row["kind"] in ["Home", "Visited", "Current", "Planned"]
+    ]
+    route_points = sorted(route_points, key=lambda row: row["order"])
+    path_data = [{"path": [[point["lon"], point["lat"]] for point in route_points]}] if len(route_points) > 1 else []
+    layers = [
+        pdk.Layer(
+            "ScatterplotLayer",
+            data=map_df,
+            get_position="[lon, lat]",
+            get_fill_color="color",
+            get_radius=26000,
+            pickable=True,
+            opacity=0.86,
+            stroked=True,
+            get_line_color=[255, 255, 255],
+            line_width_min_pixels=2,
+        ),
+        pdk.Layer(
+            "TextLayer",
+            data=map_df,
+            get_position="[lon, lat]",
+            get_text="stop",
+            get_size=14,
+            get_color=[34, 49, 63],
+            get_angle=0,
+            get_text_anchor="middle",
+            get_alignment_baseline="bottom",
+            get_pixel_offset="[0, -24]",
+        ),
+    ]
+    if path_data:
+        layers.insert(
+            0,
+            pdk.Layer(
+                "PathLayer",
+                data=path_data,
+                get_path="path",
+                get_color=[255, 111, 97],
+                width_min_pixels=4,
+                rounded=True,
+            ),
+        )
+    deck = pdk.Deck(
+        map_style="https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+        initial_view_state=pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=4.2, pitch=28),
+        layers=layers,
+        tooltip={"text": "{stop}\n{kind}\n{details}"},
+    )
+    st.pydeck_chart(deck, use_container_width=True)
+
+
 def render_postcard_card(entry: dict[str, Any]) -> None:
     tags = " / ".join(entry.get("tags", [])) or "road note"
     prompt = entry.get("memory_prompt", "Memory")
@@ -472,18 +603,34 @@ def render_photo_gallery(journal: list[dict[str, Any]]) -> None:
         st.info("Uploaded journal photos will show up here in a travel gallery.")
         return
 
-    location_filter = st.selectbox(
+    col1, col2 = st.columns([1, 1])
+    location_filter = col1.selectbox(
         "Filter by location",
         ["All"] + sorted({photo["location"] for photo in photos if photo["location"]}),
     )
+    favorites_only = col2.checkbox("Favorites only")
     if location_filter != "All":
         photos = [photo for photo in photos if photo["location"] == location_filter]
+    if favorites_only:
+        photos = [photo for photo in photos if photo.get("favorite")]
+
+    if not photos:
+        st.info("No photos match that filter yet.")
+        return
 
     for index in range(0, len(photos), 3):
         cols = st.columns(3)
         for column, photo in zip(cols, photos[index : index + 3]):
             column.image(photo["path"], use_column_width=True)
-            column.caption(f"{photo['date']} - {photo['location']} - {photo['title']}")
+            favorite_label = "Favorite" if photo.get("favorite") else "Photo"
+            column.caption(f"{favorite_label}: {photo['date']} - {photo['location']} - {photo['title']}")
+            caption_key = f"caption_{photo['path']}"
+            favorite_key = f"favorite_{photo['path']}"
+            new_caption = column.text_input("Caption", value=photo.get("caption", ""), key=caption_key)
+            new_favorite = column.checkbox("Favorite photo", value=bool(photo.get("favorite")), key=favorite_key)
+            if column.button("Save photo details", key=f"save_{photo['path']}", use_container_width=True):
+                update_photo_metadata(photo["path"], new_caption, new_favorite)
+                st.success("Photo details saved.")
 
 
 def render_postcard_generator(journal: list[dict[str, Any]]) -> None:
@@ -945,16 +1092,20 @@ def render_dashboard(location: dict[str, Any]) -> None:
         weather_summary = f"{current['temperature_2m']:.0f} F, {weather_label(int(current['weather_code']))}"
     except requests.RequestException:
         weather_summary = "Weather offline"
-    command_cols = st.columns(4)
-    command_cols[0].metric("Current Stop", location.get("name", "Current area"))
-    command_cols[1].metric("Today's Weather", weather_summary)
-    command_cols[2].metric("Next Stop", planned_stops[0].get("name", "Add a planned stop") if planned_stops else "Add a planned stop")
-    command_cols[3].metric("Next Reservation", next_reservation.get("campground", "None saved"))
-    if latest_checklist:
-        done = len(latest_checklist.get("completed", []))
-        total = latest_checklist.get("total_items", len(DEPARTURE_ITEMS))
-        st.progress(done / total if total else 0)
-        st.caption(f"Latest departure checklist: {done}/{total} complete")
+    map_col, command_col = st.columns([1.55, 1])
+    with map_col:
+        render_route_map(location, stops, height=470)
+        st.caption("Route lines connect home base, current area, and saved stops so the trip feels like a real travel board.")
+    with command_col:
+        st.metric("Current Stop", location.get("name", "Current area"))
+        st.metric("Today's Weather", weather_summary)
+        st.metric("Next Stop", planned_stops[0].get("name", "Add a planned stop") if planned_stops else "Add a planned stop")
+        st.metric("Next Reservation", next_reservation.get("campground", "None saved"))
+        if latest_checklist:
+            done = len(latest_checklist.get("completed", []))
+            total = latest_checklist.get("total_items", len(DEPARTURE_ITEMS))
+            st.progress(done / total if total else 0)
+            st.caption(f"Latest departure checklist: {done}/{total} complete")
 
     st.markdown("### Bob's Travel Stats")
     col1, col2, col3, col4 = st.columns(4)
@@ -978,32 +1129,10 @@ def render_dashboard(location: dict[str, Any]) -> None:
     route3.metric("Visited Stops", len(visited_stops))
     route4.metric("Favorite Memory", stats["favorite"])
 
-    map_rows = [
-        {
-            "stop": HOME_BASE["name"],
-            "lat": HOME_BASE["latitude"],
-            "lon": HOME_BASE["longitude"],
-            "kind": "Home",
-        },
-        {
-            "stop": location.get("name", "Current stop"),
-            "lat": float(location["latitude"]),
-            "lon": float(location["longitude"]),
-            "kind": "Current",
-        },
-    ]
-    for stop in stops:
-        if stop.get("latitude") and stop.get("longitude"):
-            map_rows.append(
-                {
-                    "stop": stop["name"],
-                    "lat": float(stop["latitude"]),
-                    "lon": float(stop["longitude"]),
-                    "kind": stop.get("status", "Stop"),
-                }
-            )
-    st.map(pd.DataFrame(map_rows), latitude="lat", longitude="lon", size=120)
-    st.caption("Home base, current area, and saved stops appear together so Bob can see where the route is filling in.")
+    map_rows = build_map_rows(location, stops)
+    legend_cols = st.columns(4)
+    for column, label in zip(legend_cols, ["Home", "Current", "Planned", "Visited"]):
+        column.caption(label)
 
     left, right = st.columns([1.2, 1])
     with left:
@@ -1565,6 +1694,46 @@ def render_reservations() -> None:
 
     reservations = sorted(load_records(RESERVATIONS_FILE), key=lambda item: item.get("check_in", "9999-99-99"))
     if reservations:
+        st.subheader("Reservation Calendar")
+        calendar_rows = []
+        for reservation in reservations:
+            try:
+                start = datetime.fromisoformat(reservation.get("check_in", "")).date()
+                end = datetime.fromisoformat(reservation.get("check_out", "")).date()
+            except ValueError:
+                continue
+            nights = max((end - start).days, 1)
+            calendar_rows.append(
+                {
+                    "When": f"{start.strftime('%b %d')} - {end.strftime('%b %d')}",
+                    "Campground": reservation.get("campground", ""),
+                    "Site": reservation.get("site", ""),
+                    "Nights": nights,
+                    "Balance": reservation.get("balance_due", 0),
+                }
+            )
+        if calendar_rows:
+            st.dataframe(pd.DataFrame(calendar_rows), use_container_width=True, hide_index=True)
+
+        month_groups: dict[str, list[dict[str, Any]]] = {}
+        for reservation in reservations:
+            month = reservation.get("check_in", "Unscheduled")[:7]
+            month_groups.setdefault(month, []).append(reservation)
+        for month, items in month_groups.items():
+            st.markdown(f"**{month}**")
+            for item in items:
+                st.markdown(
+                    f"""
+                    <div class="timeline-item">
+                        <div class="timeline-date">{item.get('check_in', '')} to {item.get('check_out', '')}</div>
+                        <div class="timeline-title">{item.get('campground', 'Campground')}</div>
+                        <div class="timeline-detail">Site {item.get('site', '')} - Confirmation {item.get('confirmation', '')} - Balance ${float(item.get('balance_due', 0) or 0):,.0f}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        st.subheader("Reservation Table")
         st.dataframe(
             pd.DataFrame(reservations)[
                 ["check_in", "check_out", "campground", "site", "confirmation", "balance_due", "phone"]
@@ -1585,8 +1754,21 @@ def render_reservations() -> None:
 
 
 def render_family_view(location: dict[str, Any]) -> None:
-    st.subheader("Family View")
-    st.caption("A simple read-only snapshot for family to see where Bob is and what he has been enjoying.")
+    st.markdown(
+        """
+        <div class="adventure-hero">
+            <div class="adventure-hero-inner">
+                <div>
+                    <div class="adventure-kicker">Family road report</div>
+                    <div class="adventure-name">Where Bob's Been</div>
+                    <div class="adventure-route">A read-only snapshot of the latest memories, favorite photos, and places worth talking about.</div>
+                </div>
+                <div class="brand-badge"><span>BA</span></div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     journal = load_records(JOURNAL_FILE)
     stops = load_records(STOPS_FILE)
     favorites = load_records(FAVORITES_FILE)
@@ -1598,29 +1780,44 @@ def render_family_view(location: dict[str, Any]) -> None:
     col3.metric("Stops", len(stops))
     col4.metric("Photos", stats["photos"])
 
-    latest_photos = all_photo_records(journal)[:6]
+    render_route_map(location, stops, height=360)
+
+    photo_records = all_photo_records(journal)
+    favorite_photos = [photo for photo in photo_records if photo.get("favorite")]
+    latest_photos = (favorite_photos or photo_records)[:6]
     if latest_photos:
-        st.subheader("Latest Photos")
+        st.subheader("Favorite Photos" if favorite_photos else "Latest Photos")
         for index in range(0, len(latest_photos), 3):
             cols = st.columns(3)
             for column, photo in zip(cols, latest_photos[index : index + 3]):
                 column.image(photo["path"], use_column_width=True)
-                column.caption(f"{photo['location']} - {photo['date']}")
+                caption = photo.get("caption") or f"{photo['location']} - {photo['date']}"
+                column.caption(caption)
 
-    st.subheader("Latest Notes")
-    if journal:
-        for entry in journal[:3]:
-            render_postcard_card(entry)
-    else:
-        st.info("No journal notes yet.")
+    notes_col, favorites_col = st.columns([1.25, 1])
+    with notes_col:
+        st.subheader("Latest Notes")
+        if journal:
+            for entry in journal[:3]:
+                render_postcard_card(entry)
+        else:
+            st.info("No journal notes yet.")
 
-    st.subheader("Favorite Places")
-    if favorites:
-        for favorite in favorites[:5]:
-            st.markdown(f"**{favorite.get('name', 'Favorite')}** - {favorite.get('city', '')}, {favorite.get('state', '')}")
-            st.caption(f"{favorite.get('category', '')} - {favorite.get('rating', 0)}/5")
-    else:
-        st.info("No favorite places saved yet.")
+    with favorites_col:
+        st.subheader("Favorite Places")
+        if favorites:
+            for favorite in favorites[:5]:
+                st.markdown(
+                    f"""
+                    <div class="award-card">
+                        <div class="award-title">{favorite.get('name', 'Favorite')}</div>
+                        <div class="award-detail">{favorite.get('category', '')} - {favorite.get('city', '')}, {favorite.get('state', '')}<br>Score: {favorite.get('rating', 0)}/5</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.info("No favorite places saved yet.")
 
 
 def main() -> None:
