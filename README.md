@@ -1,14 +1,20 @@
-# Dad's RV Travel Companion
+# Bob's Adventures
 
-A private Streamlit travel companion for RV trips from an Arizona home base.
+A private Streamlit travel companion for Bob's RV trips from an Arizona home base.
 
 ## What It Does
 
 - Travel journal with daily notes, tags, ratings, and photo uploads
+- Memory-of-the-day prompts and postcard-style journal cards
+- Photo gallery with location filtering
 - Stops and campground log with hookups, nights, cost, and cell signal
-- Dashboard with current location, Arizona home base distance, map, and recent notes
+- Campground score cards for quiet, parking ease, and stay-again rating
+- Dashboard with current location, Arizona home base distance, map, stats, badges, and recent postcards
 - Weather watch using Open-Meteo, with no API key required
+- RV-friendly weather alert cards for wind, heat, and freezing temperatures
 - Local event search links for festivals, farmers markets, live music, and campgrounds
+- Adventure badges, trip awards, road timeline, state sticker board, and season recap
+- Fun Stuff tab with an adventure prompt wheel, roadside finds, and postcard generator
 - RV maintenance log for tires, generator, propane, batteries, truck, repairs, and more
 
 ## Run Locally
