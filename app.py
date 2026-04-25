@@ -26,6 +26,8 @@ JOURNAL_FILE = DATA_DIR / "journal_entries.json"
 STOPS_FILE = DATA_DIR / "trip_stops.json"
 MAINTENANCE_FILE = DATA_DIR / "maintenance_log.json"
 ROADSIDE_FILE = DATA_DIR / "roadside_finds.json"
+CHECKLIST_FILE = DATA_DIR / "departure_checklists.json"
+FAVORITES_FILE = DATA_DIR / "favorite_places.json"
 
 US_STATES = [
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
@@ -45,17 +47,136 @@ MEMORY_PROMPTS = [
     "Best conversation",
 ]
 
+DEPARTURE_ITEMS = [
+    "Slides in",
+    "Jacks up",
+    "Hitch locked",
+    "Breakaway cable connected",
+    "Safety chains connected",
+    "Water disconnected",
+    "Sewer disconnected",
+    "Power disconnected",
+    "Propane checked",
+    "Tire pressure checked",
+    "Cabinets and fridge secured",
+    "Steps up",
+    "Lights tested",
+    "Site walked for forgotten items",
+]
+
+THEME_PRESETS = {
+    "Coastal Drive": {
+        "sunshine": "#FFE66D",
+        "coral": "#FF6B6B",
+        "teal": "#00B4D8",
+        "deep": "#006D77",
+        "sky": "#90E0EF",
+        "mint": "#CAF0F8",
+        "cream": "#FFF7E6",
+        "background": "linear-gradient(180deg, #dff8ff 0%, #fff7e6 54%, #ffffff 100%)",
+    },
+    "Desert Sunset": {
+        "sunshine": "#FFD166",
+        "coral": "#EF476F",
+        "teal": "#06D6A0",
+        "deep": "#26547C",
+        "sky": "#8ECAE6",
+        "mint": "#E9FFF7",
+        "cream": "#FFF2CC",
+        "background": "linear-gradient(180deg, #fff0c9 0%, #ffe2d1 48%, #fffdf7 100%)",
+    },
+    "Mountain Morning": {
+        "sunshine": "#F9C74F",
+        "coral": "#F9844A",
+        "teal": "#43AA8B",
+        "deep": "#277DA1",
+        "sky": "#A9DEF9",
+        "mint": "#E0FBFC",
+        "cream": "#FAF3DD",
+        "background": "linear-gradient(180deg, #dff5ff 0%, #e9fff7 52%, #fffdf7 100%)",
+    },
+    "Campfire Night": {
+        "sunshine": "#F9C74F",
+        "coral": "#F3722C",
+        "teal": "#4D908E",
+        "deep": "#1D3557",
+        "sky": "#457B9D",
+        "mint": "#F1FAEE",
+        "cream": "#FFF3B0",
+        "background": "linear-gradient(180deg, #d8ecff 0%, #fff3b0 58%, #fffdf7 100%)",
+    },
+}
+
 
 def ensure_storage() -> None:
     DATA_DIR.mkdir(exist_ok=True)
     PHOTO_DIR.mkdir(exist_ok=True)
-    for path in [JOURNAL_FILE, STOPS_FILE, MAINTENANCE_FILE, ROADSIDE_FILE]:
+    for path in [JOURNAL_FILE, STOPS_FILE, MAINTENANCE_FILE, ROADSIDE_FILE, CHECKLIST_FILE, FAVORITES_FILE]:
         if not path.exists():
             path.write_text("[]", encoding="utf-8")
 
 
+def record_type_for_path(path: Path) -> str:
+    return path.stem
+
+
+def get_supabase_client() -> Any | None:
+    try:
+        url = st.secrets.get("SUPABASE_URL")
+        key = st.secrets.get("SUPABASE_ANON_KEY")
+    except Exception:
+        return None
+    if not url or not key:
+        return None
+    try:
+        from supabase import create_client
+    except ImportError:
+        return None
+    return create_client(url, key)
+
+
+def load_cloud_records(path: Path) -> list[dict[str, Any]] | None:
+    client = get_supabase_client()
+    if client is None:
+        return None
+    try:
+        response = (
+            client.table("app_records")
+            .select("payload")
+            .eq("record_type", record_type_for_path(path))
+            .execute()
+        )
+        if not response.data:
+            return []
+        payload = response.data[0].get("payload", [])
+        return payload if isinstance(payload, list) else []
+    except Exception:
+        return None
+
+
+def save_cloud_records(path: Path, records: list[dict[str, Any]]) -> bool:
+    client = get_supabase_client()
+    if client is None:
+        return False
+    try:
+        client.table("app_records").upsert(
+            {
+                "record_type": record_type_for_path(path),
+                "payload": records,
+                "updated_at": datetime.now().isoformat(),
+            },
+            on_conflict="record_type",
+        ).execute()
+        return True
+    except Exception:
+        return False
+
+
 def load_records(path: Path) -> list[dict[str, Any]]:
     ensure_storage()
+    cloud_records = load_cloud_records(path)
+    if cloud_records is not None:
+        return cloud_records
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
@@ -64,6 +185,8 @@ def load_records(path: Path) -> list[dict[str, Any]]:
 
 def save_records(path: Path, records: list[dict[str, Any]]) -> None:
     ensure_storage()
+    if save_cloud_records(path, records):
+        return
     path.write_text(json.dumps(records, indent=2), encoding="utf-8")
 
 
@@ -167,6 +290,18 @@ def event_search_links(city: str, state: str) -> dict[str, str]:
         "Farmers markets": f"https://www.google.com/search?q=farmers+markets+near+{query}",
         "Live music": f"https://www.google.com/search?q=live+music+near+{query}",
         "Campgrounds": f"https://www.google.com/search?q=campgrounds+near+{query}",
+    }
+
+
+def food_search_links(city: str, state: str) -> dict[str, str]:
+    location = f"{city}, {state}".strip(", ")
+    query = location.replace(" ", "+")
+    return {
+        "Diners": f"https://www.google.com/search?q=best+diners+near+{query}",
+        "Breakfast": f"https://www.google.com/search?q=best+breakfast+near+{query}",
+        "BBQ": f"https://www.google.com/search?q=best+bbq+near+{query}",
+        "Coffee": f"https://www.google.com/search?q=coffee+near+{query}",
+        "Ice Cream": f"https://www.google.com/search?q=ice+cream+near+{query}",
     }
 
 
@@ -293,19 +428,23 @@ def render_postcard_card(entry: dict[str, Any]) -> None:
     tags = " / ".join(entry.get("tags", [])) or "road note"
     prompt = entry.get("memory_prompt", "Memory")
     memory = entry.get("memory_answer", "")
-    st.markdown(
-        f"""
-        <div class="postcard-card">
-            <div class="postcard-stamp">{entry.get('entry_date', '')}</div>
-            <h4>{entry.get('title', 'Untitled adventure')}</h4>
-            <strong>{entry.get('location', 'Somewhere on the road')}</strong><br>
-            <small>{tags} - Rating {entry.get('rating', 0)}/5</small>
-            <p>{entry.get('notes', '')}</p>
-            <p><strong>{prompt}:</strong> {memory}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    card_html = f"""
+    <div class="postcard-card">
+        <div class="postcard-stamp">{entry.get('entry_date', '')}</div>
+        <h4>{entry.get('title', 'Untitled adventure')}</h4>
+        <strong>{entry.get('location', 'Somewhere on the road')}</strong><br>
+        <small>{tags} - Rating {entry.get('rating', 0)}/5</small>
+        <p>{entry.get('notes', '')}</p>
+        <p><strong>{prompt}:</strong> {memory}</p>
+    </div>
+    """
+    photos = [photo for photo in entry.get("photos", []) if Path(photo).exists()]
+    if photos:
+        image_col, text_col = st.columns([0.42, 1])
+        image_col.image(photos[0], use_column_width=True)
+        text_col.markdown(card_html, unsafe_allow_html=True)
+    else:
+        st.markdown(card_html, unsafe_allow_html=True)
 
 
 def render_photo_gallery(journal: list[dict[str, Any]]) -> None:
@@ -379,6 +518,7 @@ def render_trip_awards(journal: list[dict[str, Any]], stops: list[dict[str, Any]
 
 def page_header() -> None:
     st.set_page_config(page_title=APP_TITLE, page_icon=":blue_car:", layout="wide")
+    selected_theme = st.sidebar.selectbox("Visual theme", list(THEME_PRESETS), index=0)
     st.markdown(
         """
         <style>
@@ -445,6 +585,7 @@ def page_header() -> None:
 
         .adventure-hero {
             background:
+                linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.02)),
                 linear-gradient(135deg, rgba(255, 111, 97, 0.96), rgba(255, 207, 74, 0.94) 48%, rgba(0, 166, 166, 0.94)),
                 linear-gradient(90deg, #ff6f61, #ffcf4a);
             padding: 1.3rem 1.4rem;
@@ -452,6 +593,54 @@ def page_header() -> None:
             margin-bottom: 1.1rem;
             color: white;
             box-shadow: 0 14px 34px rgba(34, 49, 63, 0.18);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .adventure-hero:after {
+            content: "";
+            position: absolute;
+            left: -6%;
+            right: -6%;
+            bottom: -3.8rem;
+            height: 7rem;
+            background:
+                linear-gradient(90deg, transparent 0 48%, rgba(255,255,255,0.8) 48% 52%, transparent 52% 100%),
+                #22313f;
+            transform: rotate(-2deg);
+            opacity: 0.18;
+        }
+
+        .adventure-hero-inner {
+            position: relative;
+            z-index: 2;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .brand-badge {
+            width: 108px;
+            height: 108px;
+            border-radius: 50%;
+            background:
+                radial-gradient(circle at 50% 34%, var(--sunshine) 0 27%, transparent 28%),
+                linear-gradient(180deg, rgba(255,255,255,0.24), rgba(255,255,255,0.08));
+            border: 3px solid rgba(255,255,255,0.78);
+            display: grid;
+            place-items: center;
+            box-shadow: 0 10px 24px rgba(34,49,63,0.22);
+        }
+
+        .brand-badge span {
+            background: rgba(34, 49, 63, 0.9);
+            color: white;
+            border-radius: 8px;
+            padding: 0.28rem 0.46rem;
+            font-size: 1.7rem;
+            font-weight: 900;
+            letter-spacing: 0;
         }
 
         .adventure-kicker {
@@ -490,6 +679,21 @@ def page_header() -> None:
             padding: 0.28rem 0.62rem;
             font-weight: 800;
             color: white;
+        }
+
+        @media (max-width: 720px) {
+            .adventure-hero-inner {
+                grid-template-columns: 1fr;
+            }
+
+            .brand-badge {
+                width: 84px;
+                height: 84px;
+            }
+
+            .adventure-name {
+                font-size: 2.2rem;
+            }
         }
 
         .badge-card,
@@ -538,20 +742,27 @@ def page_header() -> None:
 
         .state-sticker {
             text-align: center;
-            border: 1px dashed rgba(8, 127, 140, 0.32);
+            border: 2px dashed rgba(8, 127, 140, 0.32);
             border-radius: 8px;
             padding: 0.45rem 0.1rem;
             margin-bottom: 0.35rem;
             color: #8b7b68;
             background: rgba(255, 255, 255, 0.58);
             font-weight: 700;
+            box-shadow: 0 4px 10px rgba(34,49,63,0.06);
+            transform: rotate(-1deg);
         }
 
         .state-sticker.earned {
-            background: linear-gradient(135deg, #ff6f61, #ffcf4a);
+            background: linear-gradient(135deg, var(--coral), var(--sunshine));
             color: #ffffff;
             border-color: transparent;
             box-shadow: 0 5px 12px rgba(255, 111, 97, 0.24);
+            text-shadow: 0 1px 1px rgba(34,49,63,0.18);
+        }
+
+        .stColumn:nth-child(even) .state-sticker {
+            transform: rotate(1deg);
         }
 
         .weather-card.watch {
@@ -569,19 +780,48 @@ def page_header() -> None:
         """,
         unsafe_allow_html=True,
     )
+    theme = THEME_PRESETS[selected_theme]
+    st.markdown(
+        f"""
+        <style>
+        :root {{
+            --sunshine: {theme["sunshine"]};
+            --coral: {theme["coral"]};
+            --teal: {theme["teal"]};
+            --deep-teal: {theme["deep"]};
+            --sky: {theme["sky"]};
+            --mint: {theme["mint"]};
+            --cream: {theme["cream"]};
+        }}
+
+        .stApp {{
+            background:
+                radial-gradient(circle at 12% 8%, {theme["sunshine"]}66, transparent 24%),
+                radial-gradient(circle at 88% 12%, {theme["sky"]}66, transparent 26%),
+                {theme["background"]};
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     st.markdown(
         """
         <div class="adventure-hero">
-            <div class="adventure-kicker">Welcome to the open-road logbook</div>
-            <div class="adventure-name">Bob's Adventures</div>
-            <div class="adventure-route">
-                Road notes, photos, weather, favorite stops, and all the little moments worth remembering from the fifth wheel.
-            </div>
-            <div class="adventure-chips">
-                <span class="adventure-chip">Arizona Basecamp</span>
-                <span class="adventure-chip">Spring Routes</span>
-                <span class="adventure-chip">Photo Memories</span>
-                <span class="adventure-chip">Campground Finds</span>
+            <div class="adventure-hero-inner">
+                <div>
+                    <div class="adventure-kicker">Welcome to the open-road logbook</div>
+                    <div class="adventure-name">Bob's Adventures</div>
+                    <div class="adventure-route">
+                        Road notes, photos, weather, favorite stops, and all the little moments worth remembering from the fifth wheel.
+                    </div>
+                    <div class="adventure-chips">
+                        <span class="adventure-chip">Arizona Basecamp</span>
+                        <span class="adventure-chip">Spring Routes</span>
+                        <span class="adventure-chip">Photo Memories</span>
+                        <span class="adventure-chip">Campground Finds</span>
+                    </div>
+                </div>
+                <div class="brand-badge"><span>BA</span></div>
             </div>
         </div>
         """,
@@ -645,7 +885,16 @@ def render_dashboard(location: dict[str, Any]) -> None:
     col7.metric("Maintenance Notes", len(maintenance))
     col8.metric("Current Area", f"{location.get('name', 'Unknown')}, {location.get('admin1', '')}")
 
-    st.subheader("Trip Map")
+    st.subheader("Route Board")
+    planned_stops = [stop for stop in stops if stop.get("status") == "Planned"]
+    visited_stops = [stop for stop in stops if stop.get("status") == "Visited"]
+    current_stops = [stop for stop in stops if stop.get("status") == "Current"]
+    route1, route2, route3, route4 = st.columns(4)
+    route1.metric("Current Pin", current_stops[0].get("name", location.get("name", "Current stop")) if current_stops else location.get("name", "Current stop"))
+    route2.metric("Next Planned", planned_stops[0].get("name", "Add a planned stop") if planned_stops else "Add a planned stop")
+    route3.metric("Visited Stops", len(visited_stops))
+    route4.metric("Favorite Memory", stats["favorite"])
+
     map_rows = [
         {
             "stop": HOME_BASE["name"],
@@ -671,6 +920,7 @@ def render_dashboard(location: dict[str, Any]) -> None:
                 }
             )
     st.map(pd.DataFrame(map_rows), latitude="lat", longitude="lon", size=120)
+    st.caption("Home base, current area, and saved stops appear together so Bob can see where the route is filling in.")
 
     left, right = st.columns([1.2, 1])
     with left:
@@ -919,6 +1169,13 @@ def render_events(location: dict[str, Any]) -> None:
         column.link_button(label, url, use_container_width=True)
 
     st.divider()
+    st.subheader("Local Food Finder")
+    food_links = food_search_links(city, state)
+    food_cols = st.columns(len(food_links))
+    for column, (label, url) in zip(food_cols, food_links.items()):
+        column.link_button(label, url, use_container_width=True)
+
+    st.divider()
     st.markdown("**Good RV-day ideas to check in each area**")
     st.write(
         "Visitor center, county fairgrounds, farmers market, local music calendar, national/state parks, "
@@ -1064,12 +1321,144 @@ def render_recap() -> None:
     )
 
 
+def render_departure_checklist() -> None:
+    st.subheader("Departure Checklist")
+    st.caption("A quick leave-the-site check before Bob pulls out.")
+    checklist_name = st.text_input("Checklist name", value=f"Departure - {date.today()}")
+    completed = []
+    for index, item in enumerate(DEPARTURE_ITEMS):
+        if st.checkbox(item, key=f"departure_{index}"):
+            completed.append(item)
+
+    progress = len(completed) / len(DEPARTURE_ITEMS)
+    st.progress(progress)
+    st.caption(f"{len(completed)} of {len(DEPARTURE_ITEMS)} checked")
+
+    if st.button("Save checklist", use_container_width=True):
+        add_record(
+            CHECKLIST_FILE,
+            {
+                "id": datetime.now().isoformat(),
+                "date": str(date.today()),
+                "name": checklist_name,
+                "completed": completed,
+                "total_items": len(DEPARTURE_ITEMS),
+            },
+        )
+        st.success("Departure checklist saved.")
+
+    saved = load_records(CHECKLIST_FILE)
+    if saved:
+        st.subheader("Saved Checklists")
+        for item in saved[:5]:
+            count = len(item.get("completed", []))
+            total = item.get("total_items", len(DEPARTURE_ITEMS))
+            with st.container(border=True):
+                st.markdown(f"**{item.get('name', 'Departure checklist')}**")
+                st.caption(f"{item.get('date', '')} - {count}/{total} complete")
+
+
+def render_favorites() -> None:
+    st.subheader("Favorite Places")
+    with st.form("favorite_form", clear_on_submit=True):
+        col1, col2, col3 = st.columns(3)
+        name = col1.text_input("Place name")
+        city = col2.text_input("City")
+        state = col3.text_input("State")
+        category = st.selectbox(
+            "Category",
+            ["Campground", "Restaurant", "Scenic view", "Small town", "Attraction", "RV store", "Fuel stop", "Other"],
+        )
+        rating = st.slider("Favorite score", 1, 5, 5)
+        notes = st.text_area("Why it is a favorite", height=120)
+        submitted = st.form_submit_button("Save favorite", use_container_width=True)
+
+    if submitted:
+        if not name:
+            st.warning("Add a place name before saving.")
+        else:
+            add_record(
+                FAVORITES_FILE,
+                {
+                    "id": datetime.now().isoformat(),
+                    "date": str(date.today()),
+                    "name": name,
+                    "city": city,
+                    "state": state.upper(),
+                    "category": category,
+                    "rating": rating,
+                    "notes": notes,
+                },
+            )
+            st.success("Favorite saved.")
+
+    favorites = load_records(FAVORITES_FILE)
+    if favorites:
+        category_filter = st.selectbox("Show category", ["All"] + sorted({favorite.get("category", "Other") for favorite in favorites}))
+        shown = favorites if category_filter == "All" else [favorite for favorite in favorites if favorite.get("category") == category_filter]
+        for index in range(0, len(shown), 3):
+            cols = st.columns(3)
+            for column, favorite in zip(cols, shown[index : index + 3]):
+                column.markdown(
+                    f"""
+                    <div class="award-card">
+                        <div class="award-title">{favorite.get('name', 'Favorite place')}</div>
+                        <div class="award-detail">
+                            {favorite.get('category', '')} - {favorite.get('city', '')}, {favorite.get('state', '')}<br>
+                            Score: {favorite.get('rating', 0)}/5<br>
+                            {favorite.get('notes', '')}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+    else:
+        st.info("Favorites will show here once Bob saves places worth revisiting.")
+
+
+def render_cloud_storage_status() -> None:
+    st.subheader("Cloud Storage")
+    client = get_supabase_client()
+    if client is None:
+        st.info(
+            "Cloud storage is ready in the code but not connected yet. Add SUPABASE_URL and "
+            "SUPABASE_ANON_KEY in Streamlit secrets, then create an app_records table."
+        )
+        st.code(
+            """
+create table app_records (
+  record_type text primary key,
+  payload jsonb not null default '[]'::jsonb,
+  updated_at timestamp with time zone default now()
+);
+            """.strip(),
+            language="sql",
+        )
+    else:
+        st.success("Supabase credentials found. App records will use cloud storage with local fallback.")
+
+
 def main() -> None:
     ensure_storage()
     page_header()
     location = sidebar_location()
 
-    tabs = st.tabs(["Basecamp", "Journal", "Gallery", "Stops", "Weather", "Events", "Fun Stuff", "Recap", "Maintenance"])
+    tabs = st.tabs(
+        [
+            "Basecamp",
+            "Journal",
+            "Gallery",
+            "Stops",
+            "Weather",
+            "Events",
+            "Prep",
+            "Favorites",
+            "Fun Stuff",
+            "Recap",
+            "Maintenance",
+            "Storage",
+        ]
+    )
     with tabs[0]:
         render_dashboard(location)
     with tabs[1]:
@@ -1083,11 +1472,17 @@ def main() -> None:
     with tabs[5]:
         render_events(location)
     with tabs[6]:
-        render_fun_stuff()
+        render_departure_checklist()
     with tabs[7]:
-        render_recap()
+        render_favorites()
     with tabs[8]:
+        render_fun_stuff()
+    with tabs[9]:
+        render_recap()
+    with tabs[10]:
         render_maintenance()
+    with tabs[11]:
+        render_cloud_storage_status()
 
 
 if __name__ == "__main__":
