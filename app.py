@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 APP_TITLE = "Bob's Adventures"
@@ -28,6 +29,7 @@ MAINTENANCE_FILE = DATA_DIR / "maintenance_log.json"
 ROADSIDE_FILE = DATA_DIR / "roadside_finds.json"
 CHECKLIST_FILE = DATA_DIR / "departure_checklists.json"
 FAVORITES_FILE = DATA_DIR / "favorite_places.json"
+RESERVATIONS_FILE = DATA_DIR / "reservations.json"
 
 US_STATES = [
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
@@ -111,7 +113,15 @@ THEME_PRESETS = {
 def ensure_storage() -> None:
     DATA_DIR.mkdir(exist_ok=True)
     PHOTO_DIR.mkdir(exist_ok=True)
-    for path in [JOURNAL_FILE, STOPS_FILE, MAINTENANCE_FILE, ROADSIDE_FILE, CHECKLIST_FILE, FAVORITES_FILE]:
+    for path in [
+        JOURNAL_FILE,
+        STOPS_FILE,
+        MAINTENANCE_FILE,
+        ROADSIDE_FILE,
+        CHECKLIST_FILE,
+        FAVORITES_FILE,
+        RESERVATIONS_FILE,
+    ]:
         if not path.exists():
             path.write_text("[]", encoding="utf-8")
 
@@ -290,6 +300,14 @@ def event_search_links(city: str, state: str) -> dict[str, str]:
         "Farmers markets": f"https://www.google.com/search?q=farmers+markets+near+{query}",
         "Live music": f"https://www.google.com/search?q=live+music+near+{query}",
         "Campgrounds": f"https://www.google.com/search?q=campgrounds+near+{query}",
+    }
+
+
+def radar_links(latitude: float, longitude: float) -> dict[str, str]:
+    return {
+        "NWS Radar": "https://radar.weather.gov/",
+        "NWS Forecast": f"https://forecast.weather.gov/MapClick.php?lat={latitude:.4f}&lon={longitude:.4f}",
+        "Weather Map": f"https://www.google.com/maps/search/weather/@{latitude:.4f},{longitude:.4f},10z",
     }
 
 
@@ -833,17 +851,60 @@ def sidebar_location() -> dict[str, Any]:
     st.sidebar.header("Current Stop")
     city = st.sidebar.text_input("City", value="Quartzsite")
     state = st.sidebar.text_input("State", value="AZ")
+    with st.sidebar.expander("Use precise location"):
+        components.html(
+            """
+            <button style="width:100%;padding:10px;border-radius:8px;border:1px solid #087f8c;background:#ffffff;color:#087f8c;font-weight:700;cursor:pointer;"
+                onclick="
+                    navigator.geolocation.getCurrentPosition(
+                        function(pos) {
+                            const url = new URL(window.parent.location.href);
+                            url.searchParams.set('gps_lat', pos.coords.latitude.toFixed(5));
+                            url.searchParams.set('gps_lon', pos.coords.longitude.toFixed(5));
+                            window.parent.location.href = url.toString();
+                        },
+                        function() { alert('Location was blocked or unavailable. You can type coordinates below.'); }
+                    );
+                ">
+                Use my device location
+            </button>
+            """,
+            height=48,
+        )
+        manual_lat = st.number_input("Latitude", value=0.0, format="%.5f")
+        manual_lon = st.number_input("Longitude", value=0.0, format="%.5f")
+        use_manual = st.button("Use typed coordinates", use_container_width=True)
+        st.caption("GPS works best on a phone or laptop browser that allows location access.")
     location_query = f"{city}, {state}"
 
     if st.sidebar.button("Update weather location", use_container_width=True):
         st.session_state["location_query"] = location_query
 
+    gps_lat = st.query_params.get("gps_lat")
+    gps_lon = st.query_params.get("gps_lon")
+    if gps_lat and gps_lon:
+        location = {
+            "name": "Device Location",
+            "admin1": "GPS",
+            "latitude": float(gps_lat),
+            "longitude": float(gps_lon),
+        }
+    elif use_manual and manual_lat and manual_lon:
+        location = {
+            "name": "Typed Coordinates",
+            "admin1": "GPS",
+            "latitude": float(manual_lat),
+            "longitude": float(manual_lon),
+        }
+    else:
+        location = None
+
     query = st.session_state.get("location_query", location_query)
-    location = None
-    try:
-        location = geocode_location(query)
-    except requests.RequestException:
-        st.sidebar.warning("Weather location lookup is offline right now.")
+    if location is None:
+        try:
+            location = geocode_location(query)
+        except requests.RequestException:
+            st.sidebar.warning("Weather location lookup is offline right now.")
 
     if not location:
         location = {
@@ -870,7 +931,30 @@ def render_dashboard(location: dict[str, Any]) -> None:
     stops = load_records(STOPS_FILE)
     maintenance = load_records(MAINTENANCE_FILE)
     roadside = load_records(ROADSIDE_FILE)
+    reservations = load_records(RESERVATIONS_FILE)
+    checklists = load_records(CHECKLIST_FILE)
     stats = trip_stats(journal, stops)
+
+    st.markdown("### Trip Command Center")
+    planned_stops = [stop for stop in stops if stop.get("status") == "Planned"]
+    next_reservation = sorted(reservations, key=lambda item: item.get("check_in", "9999-99-99"))[0] if reservations else {}
+    latest_checklist = checklists[0] if checklists else {}
+    try:
+        weather = get_weather(float(location["latitude"]), float(location["longitude"]))
+        current = weather["current"]
+        weather_summary = f"{current['temperature_2m']:.0f} F, {weather_label(int(current['weather_code']))}"
+    except requests.RequestException:
+        weather_summary = "Weather offline"
+    command_cols = st.columns(4)
+    command_cols[0].metric("Current Stop", location.get("name", "Current area"))
+    command_cols[1].metric("Today's Weather", weather_summary)
+    command_cols[2].metric("Next Stop", planned_stops[0].get("name", "Add a planned stop") if planned_stops else "Add a planned stop")
+    command_cols[3].metric("Next Reservation", next_reservation.get("campground", "None saved"))
+    if latest_checklist:
+        done = len(latest_checklist.get("completed", []))
+        total = latest_checklist.get("total_items", len(DEPARTURE_ITEMS))
+        st.progress(done / total if total else 0)
+        st.caption(f"Latest departure checklist: {done}/{total} complete")
 
     st.markdown("### Bob's Travel Stats")
     col1, col2, col3, col4 = st.columns(4)
@@ -886,7 +970,6 @@ def render_dashboard(location: dict[str, Any]) -> None:
     col8.metric("Current Area", f"{location.get('name', 'Unknown')}, {location.get('admin1', '')}")
 
     st.subheader("Route Board")
-    planned_stops = [stop for stop in stops if stop.get("status") == "Planned"]
     visited_stops = [stop for stop in stops if stop.get("status") == "Visited"]
     current_stops = [stop for stop in stops if stop.get("status") == "Current"]
     route1, route2, route3, route4 = st.columns(4)
@@ -1102,8 +1185,15 @@ def render_stops() -> None:
 
 def render_weather(location: dict[str, Any]) -> None:
     st.subheader("Weather Watch")
+    lat = float(location["latitude"])
+    lon = float(location["longitude"])
+    st.caption(f"Forecast location: {location.get('name', 'Selected location')} ({lat:.4f}, {lon:.4f})")
+    radar_cols = st.columns(3)
+    for column, (label, url) in zip(radar_cols, radar_links(lat, lon).items()):
+        column.link_button(label, url, use_container_width=True)
+
     try:
-        weather = get_weather(float(location["latitude"]), float(location["longitude"]))
+        weather = get_weather(lat, lon)
     except requests.RequestException:
         st.error("Weather is unavailable right now. Check internet connection or try again later.")
         return
@@ -1438,6 +1528,101 @@ create table app_records (
         st.success("Supabase credentials found. App records will use cloud storage with local fallback.")
 
 
+def render_reservations() -> None:
+    st.subheader("Reservation Tracker")
+    with st.form("reservation_form", clear_on_submit=True):
+        col1, col2, col3 = st.columns(3)
+        campground = col1.text_input("Campground")
+        site = col2.text_input("Site number")
+        confirmation = col3.text_input("Confirmation number")
+        col4, col5, col6 = st.columns(3)
+        check_in = col4.date_input("Check-in", value=date.today())
+        check_out = col5.date_input("Check-out", value=date.today())
+        balance_due = col6.number_input("Balance due", min_value=0.0, value=0.0, step=10.0)
+        phone = st.text_input("Campground phone")
+        notes = st.text_area("Reservation notes", height=110)
+        submitted = st.form_submit_button("Save reservation", use_container_width=True)
+
+    if submitted:
+        if not campground:
+            st.warning("Add the campground name before saving.")
+        else:
+            add_record(
+                RESERVATIONS_FILE,
+                {
+                    "id": datetime.now().isoformat(),
+                    "campground": campground,
+                    "site": site,
+                    "confirmation": confirmation,
+                    "check_in": str(check_in),
+                    "check_out": str(check_out),
+                    "balance_due": balance_due,
+                    "phone": phone,
+                    "notes": notes,
+                },
+            )
+            st.success("Reservation saved.")
+
+    reservations = sorted(load_records(RESERVATIONS_FILE), key=lambda item: item.get("check_in", "9999-99-99"))
+    if reservations:
+        st.dataframe(
+            pd.DataFrame(reservations)[
+                ["check_in", "check_out", "campground", "site", "confirmation", "balance_due", "phone"]
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+        for reservation in reservations[:4]:
+            with st.container(border=True):
+                st.markdown(f"**{reservation.get('campground', 'Campground')}**")
+                st.caption(
+                    f"{reservation.get('check_in', '')} to {reservation.get('check_out', '')} - "
+                    f"Site {reservation.get('site', '')} - Confirmation {reservation.get('confirmation', '')}"
+                )
+                st.write(reservation.get("notes", ""))
+    else:
+        st.info("No reservations saved yet.")
+
+
+def render_family_view(location: dict[str, Any]) -> None:
+    st.subheader("Family View")
+    st.caption("A simple read-only snapshot for family to see where Bob is and what he has been enjoying.")
+    journal = load_records(JOURNAL_FILE)
+    stops = load_records(STOPS_FILE)
+    favorites = load_records(FAVORITES_FILE)
+    stats = trip_stats(journal, stops)
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Current Area", f"{location.get('name', 'Unknown')}, {location.get('admin1', '')}")
+    col2.metric("States", stats["states"])
+    col3.metric("Stops", len(stops))
+    col4.metric("Photos", stats["photos"])
+
+    latest_photos = all_photo_records(journal)[:6]
+    if latest_photos:
+        st.subheader("Latest Photos")
+        for index in range(0, len(latest_photos), 3):
+            cols = st.columns(3)
+            for column, photo in zip(cols, latest_photos[index : index + 3]):
+                column.image(photo["path"], use_column_width=True)
+                column.caption(f"{photo['location']} - {photo['date']}")
+
+    st.subheader("Latest Notes")
+    if journal:
+        for entry in journal[:3]:
+            render_postcard_card(entry)
+    else:
+        st.info("No journal notes yet.")
+
+    st.subheader("Favorite Places")
+    if favorites:
+        for favorite in favorites[:5]:
+            st.markdown(f"**{favorite.get('name', 'Favorite')}** - {favorite.get('city', '')}, {favorite.get('state', '')}")
+            st.caption(f"{favorite.get('category', '')} - {favorite.get('rating', 0)}/5")
+    else:
+        st.info("No favorite places saved yet.")
+
+
 def main() -> None:
     ensure_storage()
     page_header()
@@ -1452,7 +1637,9 @@ def main() -> None:
             "Weather",
             "Events",
             "Prep",
+            "Reservations",
             "Favorites",
+            "Family View",
             "Fun Stuff",
             "Recap",
             "Maintenance",
@@ -1474,14 +1661,18 @@ def main() -> None:
     with tabs[6]:
         render_departure_checklist()
     with tabs[7]:
-        render_favorites()
+        render_reservations()
     with tabs[8]:
-        render_fun_stuff()
+        render_favorites()
     with tabs[9]:
-        render_recap()
+        render_family_view(location)
     with tabs[10]:
-        render_maintenance()
+        render_fun_stuff()
     with tabs[11]:
+        render_recap()
+    with tabs[12]:
+        render_maintenance()
+    with tabs[13]:
         render_cloud_storage_status()
 
 
