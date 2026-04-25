@@ -383,58 +383,60 @@ def page_header() -> None:
         """
         <style>
         :root {
-            --sand: #f7efe1;
-            --sunset: #d86f45;
-            --campfire: #f2a541;
-            --cactus: #2f6f5e;
-            --sky: #4f9fcf;
-            --ink: #26312d;
+            --sunshine: #ffcf4a;
+            --coral: #ff6f61;
+            --teal: #00a6a6;
+            --deep-teal: #087f8c;
+            --sky: #43b5e8;
+            --mint: #d9fff5;
+            --cream: #fff7df;
+            --ink: #22313f;
         }
 
         .stApp {
             background:
-                linear-gradient(180deg, rgba(247,239,225,0.98) 0%, rgba(255,252,245,1) 42%),
-                radial-gradient(circle at top left, rgba(242,165,65,0.18), transparent 28%),
-                radial-gradient(circle at top right, rgba(79,159,207,0.16), transparent 30%);
+                radial-gradient(circle at 12% 8%, rgba(255, 207, 74, 0.42), transparent 24%),
+                radial-gradient(circle at 88% 12%, rgba(67, 181, 232, 0.34), transparent 26%),
+                linear-gradient(180deg, #e8fbff 0%, #fff7df 48%, #fffdf7 100%);
             color: var(--ink);
         }
 
         [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #fff7ea 0%, #edf6f1 100%);
-            border-right: 1px solid rgba(47, 111, 94, 0.18);
+            background: linear-gradient(180deg, #d9fff5 0%, #fff7df 100%);
+            border-right: 1px solid rgba(0, 166, 166, 0.28);
         }
 
         h1 {
-            color: var(--cactus);
+            color: var(--deep-teal);
             font-weight: 800;
         }
 
         h2, h3 {
-            color: #30483f;
+            color: #22545d;
         }
 
         div[data-testid="stMetric"] {
-            background: rgba(255, 255, 255, 0.76);
-            border: 1px solid rgba(47, 111, 94, 0.14);
+            background: rgba(255, 255, 255, 0.88);
+            border: 1px solid rgba(0, 166, 166, 0.18);
             border-radius: 8px;
             padding: 0.85rem;
-            box-shadow: 0 6px 18px rgba(56, 42, 22, 0.06);
+            box-shadow: 0 8px 22px rgba(34, 49, 63, 0.08);
         }
 
         .stButton > button,
         .stDownloadButton > button,
         a[data-testid="stLinkButton"] {
             border-radius: 8px;
-            border-color: rgba(47, 111, 94, 0.36);
-            background: #fffaf1;
-            color: var(--cactus);
+            border-color: rgba(8, 127, 140, 0.42);
+            background: #ffffff;
+            color: var(--deep-teal);
             font-weight: 650;
         }
 
         .stButton > button:hover,
         a[data-testid="stLinkButton"]:hover {
-            border-color: var(--sunset);
-            color: #9c4529;
+            border-color: var(--coral);
+            color: var(--coral);
         }
 
         [data-testid="stCaptionContainer"] {
@@ -442,15 +444,52 @@ def page_header() -> None:
         }
 
         .adventure-hero {
-            border-left: 6px solid var(--sunset);
-            background: linear-gradient(90deg, rgba(255,250,241,0.94), rgba(237,246,241,0.82));
-            padding: 1rem 1.1rem;
+            background:
+                linear-gradient(135deg, rgba(255, 111, 97, 0.96), rgba(255, 207, 74, 0.94) 48%, rgba(0, 166, 166, 0.94)),
+                linear-gradient(90deg, #ff6f61, #ffcf4a);
+            padding: 1.3rem 1.4rem;
             border-radius: 8px;
-            margin-bottom: 1rem;
+            margin-bottom: 1.1rem;
+            color: white;
+            box-shadow: 0 14px 34px rgba(34, 49, 63, 0.18);
         }
 
-        .adventure-hero strong {
-            color: var(--sunset);
+        .adventure-kicker {
+            font-weight: 800;
+            letter-spacing: 0;
+            text-transform: uppercase;
+            font-size: 0.86rem;
+            opacity: 0.92;
+        }
+
+        .adventure-name {
+            font-size: 3rem;
+            line-height: 1;
+            font-weight: 900;
+            margin: 0.2rem 0 0.45rem 0;
+            color: white;
+        }
+
+        .adventure-route {
+            font-size: 1.02rem;
+            max-width: 760px;
+            font-weight: 650;
+        }
+
+        .adventure-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.9rem;
+        }
+
+        .adventure-chip {
+            background: rgba(255, 255, 255, 0.24);
+            border: 1px solid rgba(255, 255, 255, 0.42);
+            border-radius: 999px;
+            padding: 0.28rem 0.62rem;
+            font-weight: 800;
+            color: white;
         }
 
         .badge-card,
@@ -458,18 +497,18 @@ def page_header() -> None:
         .timeline-item,
         .weather-card,
         .award-card {
-            background: rgba(255, 250, 241, 0.92);
-            border: 1px solid rgba(47, 111, 94, 0.16);
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(0, 166, 166, 0.18);
             border-radius: 8px;
             padding: 0.85rem;
             margin-bottom: 0.75rem;
-            box-shadow: 0 6px 18px rgba(56, 42, 22, 0.06);
+            box-shadow: 0 8px 22px rgba(34, 49, 63, 0.08);
         }
 
         .badge-title,
         .timeline-title,
         .award-title {
-            color: var(--cactus);
+            color: var(--deep-teal);
             font-weight: 800;
         }
 
@@ -482,15 +521,15 @@ def page_header() -> None:
         }
 
         .postcard-card {
-            border: 2px solid rgba(216, 111, 69, 0.34);
+            border: 2px solid rgba(255, 111, 97, 0.34);
             background:
-                linear-gradient(135deg, rgba(255,255,255,0.96), rgba(255,248,236,0.94));
+                linear-gradient(135deg, rgba(255,255,255,0.98), rgba(217,255,245,0.86));
         }
 
         .postcard-stamp {
             float: right;
-            border: 2px dashed rgba(216, 111, 69, 0.62);
-            color: var(--sunset);
+            border: 2px dashed rgba(255, 111, 97, 0.72);
+            color: var(--coral);
             padding: 0.35rem 0.5rem;
             border-radius: 6px;
             font-weight: 800;
@@ -499,7 +538,7 @@ def page_header() -> None:
 
         .state-sticker {
             text-align: center;
-            border: 1px dashed rgba(47, 111, 94, 0.28);
+            border: 1px dashed rgba(8, 127, 140, 0.32);
             border-radius: 8px;
             padding: 0.45rem 0.1rem;
             margin-bottom: 0.35rem;
@@ -509,18 +548,18 @@ def page_header() -> None:
         }
 
         .state-sticker.earned {
-            background: linear-gradient(135deg, #d86f45, #f2a541);
+            background: linear-gradient(135deg, #ff6f61, #ffcf4a);
             color: #ffffff;
             border-color: transparent;
-            box-shadow: 0 5px 12px rgba(216, 111, 69, 0.22);
+            box-shadow: 0 5px 12px rgba(255, 111, 97, 0.24);
         }
 
         .weather-card.watch {
-            border-left: 6px solid var(--campfire);
+            border-left: 6px solid var(--sunshine);
         }
 
         .weather-card.good {
-            border-left: 6px solid var(--cactus);
+            border-left: 6px solid var(--teal);
         }
 
         .quick-actions button {
@@ -530,12 +569,20 @@ def page_header() -> None:
         """,
         unsafe_allow_html=True,
     )
-    st.title(APP_TITLE)
     st.markdown(
         """
         <div class="adventure-hero">
-            <strong>Road notes, weather, photos, and favorite stops from the fifth wheel.</strong><br>
-            Built around spring adventures, winter returns to Arizona, and the places worth remembering.
+            <div class="adventure-kicker">Welcome to the open-road logbook</div>
+            <div class="adventure-name">Bob's Adventures</div>
+            <div class="adventure-route">
+                Road notes, photos, weather, favorite stops, and all the little moments worth remembering from the fifth wheel.
+            </div>
+            <div class="adventure-chips">
+                <span class="adventure-chip">Arizona Basecamp</span>
+                <span class="adventure-chip">Spring Routes</span>
+                <span class="adventure-chip">Photo Memories</span>
+                <span class="adventure-chip">Campground Finds</span>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
